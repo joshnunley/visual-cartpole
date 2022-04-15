@@ -8,6 +8,7 @@ import math
 from typing import Optional, Union
 
 import numpy as np
+import scipy
 import pygame
 from pygame import gfxdraw
 
@@ -65,7 +66,7 @@ class CartPoleEnv(gym.Env):
         self.total_mass = self.masspole + self.masscart
         self.length = 0.5  # actually half the pole's length
         self.polemass_length = self.masspole * self.length
-        self.max_force = 100.0
+        self.max_force = 10.0
         self.tau = tau  # seconds between state updates
         self.kinematics_integrator = "euler"
 
@@ -102,6 +103,19 @@ class CartPoleEnv(gym.Env):
 
         self.steps_beyond_done = None
 
+        shape = (61, 51)
+        array = np.zeros(shape=shape)
+
+        pole_height = 20
+        pole_width = 3
+
+        x_start = int((shape[0] - ((pole_width + 1) / 2)) / 2)
+        y_start = int((shape[1] - 1) / 2)
+        array[x_start : x_start + pole_width, y_start - pole_height : y_start] = 1
+
+        self.base_array = np.transpose(array)
+        self.visual_array = self.base_array
+
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
@@ -119,10 +133,10 @@ class CartPoleEnv(gym.Env):
         # For the interested reader:
         # https://coneural.org/florian/papers/05_cart_pole.pdf
         temp = (
-            spring_force + force + self.polemass_length * theta_dot**2 * sintheta
+            spring_force + force + self.polemass_length * theta_dot ** 2 * sintheta
         ) / self.total_mass
         thetaacc = perturbation + (self.gravity * sintheta - costheta * temp) / (
-            self.length * (4.0 / 3.0 - self.masspole * costheta**2 / self.total_mass)
+            self.length * (4.0 / 3.0 - self.masspole * costheta ** 2 / self.total_mass)
         )
         xacc = temp - self.polemass_length * thetaacc * costheta / self.total_mass
 
@@ -138,6 +152,11 @@ class CartPoleEnv(gym.Env):
             theta = theta + self.tau * theta_dot
 
         self.state = (x, x_dot, theta, theta_dot)
+
+        degrees = (self.state[2] / (2 * np.pi)) * 360
+        self.visual_array = scipy.ndimage.rotate(
+            self.base_array, degrees, reshape=False
+        )
 
         done = bool(
             x < -self.x_threshold
@@ -173,22 +192,32 @@ class CartPoleEnv(gym.Env):
 
         return np.array(self.state), reward, done, {}
 
-    def reset(self):
+    def reset(self, side=0):
         self.state = np.zeros(shape=(4,))
-        """
-        self.state[2] = self.np_random.uniform(
-            low=-self.theta_threshold_radians / 4, high=self.theta_threshold_radians / 4
-        )
-        self.state[3] = self.np_random.uniform(low=-0.05, high=0.05)
-        """
-        if np.random.uniform() < 0.5:
-            self.state[2] = -self.theta_threshold_radians / 8
+        theta_range = self.theta_threshold_radians / 4
+        if side == 0:
+            side = np.random.uniform(-1, 1)
+        if side < 0:
+            self.state[2] = self.np_random.uniform(low=-theta_range, high=0)
         else:
-            self.state[2] = self.theta_threshold_radians / 8
-        return np.array(self.state)
+            self.state[2] = self.np_random.uniform(low=0, high=theta_range)
 
+        # self.state[3] = self.np_random.uniform(low=-2, high=2)
+
+        # if np.random.uniform() < 0.5:
+        #   self.state[2] = -self.theta_threshold_radians / 8
+        # else:
+        #    self.state[2] = self.theta_threshold_radians / 8
+
+        degrees = (self.state[2] / (2 * np.pi)) * 360
+        self.visual_array = scipy.ndimage.rotate(
+            self.base_array, degrees, reshape=False
+        )
         self.steps_beyond_done = None
         return np.array(self.state)
+
+    def get_visual_array(self):
+        return self.visual_array
 
     def render(self, mode="human"):
         screen_width = 600
@@ -265,8 +294,11 @@ class CartPoleEnv(gym.Env):
             pygame.display.flip()
 
         if mode == "rgb_array":
-            return np.transpose(
-                np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2)
+            return np.mean(
+                np.transpose(
+                    np.array(pygame.surfarray.pixels3d(self.screen)), axes=(1, 0, 2)
+                ),
+                axis=2,
             )
         else:
             return self.isopen
